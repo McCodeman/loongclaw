@@ -19,6 +19,7 @@ repository = "https://github.com/loongclaw-ai/loongclaw"
 homepage = "https://github.com/loongclaw-ai/loongclaw"
 
 [workspace.dependencies]
+async-nats = "0.39"
 async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 dialoguer = { version = "0.12", features = ["fuzzy-select"] }

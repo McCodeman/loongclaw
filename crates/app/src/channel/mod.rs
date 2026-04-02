@@ -19,6 +19,8 @@ mod irc;
 mod line;
 #[cfg(feature = "channel-matrix")]
 mod matrix;
+#[cfg(feature = "channel-nats")]
+pub(crate) mod nats;
 #[cfg(feature = "channel-mattermost")]
 mod mattermost;
 #[cfg(feature = "channel-nextcloud-talk")]

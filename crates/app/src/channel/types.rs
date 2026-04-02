@@ -3,7 +3,8 @@
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use std::collections::BTreeSet;
 #[cfg(any(
@@ -11,7 +12,8 @@ use std::collections::BTreeSet;
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use std::future::Future;
 use std::path::PathBuf;
@@ -20,7 +22,8 @@ use std::path::PathBuf;
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use std::pin::Pin;
 use std::{fmt, str::FromStr};
@@ -41,7 +44,8 @@ use serde::Serialize;
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use serde_json::Value;
 
@@ -50,7 +54,8 @@ use serde_json::Value;
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use super::runtime_state::ChannelOperationRuntimeTracker;
 #[cfg(any(
@@ -58,7 +63,8 @@ use super::runtime_state::ChannelOperationRuntimeTracker;
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use super::turn_feedback::ChannelTurnFeedbackPolicy;
 use crate::CliResult;
@@ -67,7 +73,8 @@ use crate::CliResult;
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use crate::config::LoongClawConfig;
 #[cfg(any(
@@ -75,7 +82,8 @@ use crate::config::LoongClawConfig;
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 use crate::config::normalize_channel_account_id;
 use crate::conversation::{
@@ -130,6 +138,7 @@ pub enum ChannelPlatform {
     Wecom,
     WhatsApp,
     Irc,
+    Nats,
 }
 
 impl ChannelPlatform {
@@ -141,6 +150,7 @@ impl ChannelPlatform {
             Self::Wecom => "wecom",
             Self::WhatsApp => "whatsapp",
             Self::Irc => "irc",
+            Self::Nats => "nats",
         }
     }
 }
@@ -435,7 +445,8 @@ impl ChannelOutboundTarget {
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 #[derive(Debug, Clone)]
 pub struct ChannelInboundMessage {
@@ -450,7 +461,8 @@ pub struct ChannelInboundMessage {
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ChannelResolvedAcpTurnHints {
@@ -463,7 +475,8 @@ pub(super) struct ChannelResolvedAcpTurnHints {
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChannelOutboundMessage {
@@ -480,7 +493,8 @@ pub enum ChannelOutboundMessage {
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 pub enum ChannelStreamingMode {
     #[default]
@@ -508,7 +522,8 @@ pub struct FeishuChannelSendRequest {
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 #[allow(dead_code)]
 #[async_trait]
@@ -551,7 +566,8 @@ pub trait ChannelAdapter {
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 pub(super) type ChannelProcessFuture = Pin<Box<dyn Future<Output = CliResult<String>> + Send>>;
 
@@ -576,6 +592,7 @@ pub(super) type ChannelProcessFuture = Pin<Box<dyn Future<Output = CliResult<Str
     feature = "channel-teams",
     feature = "channel-wecom",
     feature = "channel-whatsapp",
+    feature = "channel-nats",
     feature = "channel-imessage"
 ))]
 pub(super) type ChannelCommandFuture<'a> = Pin<Box<dyn Future<Output = CliResult<()>> + Send + 'a>>;
@@ -896,7 +913,8 @@ fn looks_like_feishu_message_id(value: &str) -> bool {
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats"
 ))]
 pub(super) async fn process_channel_batch<A, F>(
     adapter: &mut A,

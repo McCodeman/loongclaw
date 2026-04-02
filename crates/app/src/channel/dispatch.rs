@@ -3453,6 +3453,7 @@ fn resolve_channel_acp_turn_hints(
         }
         ChannelPlatform::WhatsApp => Ok(ChannelResolvedAcpTurnHints::default()),
         ChannelPlatform::Irc => Ok(ChannelResolvedAcpTurnHints::default()),
+        ChannelPlatform::Nats => Ok(ChannelResolvedAcpTurnHints::default()),
     }
 }
 
