@@ -90,7 +90,10 @@ impl Default for ExternalSkillsRuntimePolicy {
             enabled: false,
             require_download_approval: true,
             allowed_domains: BTreeSet::new(),
-            blocked_domains: BTreeSet::new(),
+            blocked_domains: crate::config::DEFAULT_EXTERNAL_SKILLS_BLOCKED_DOMAIN_RULES
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             install_root: None,
             auto_expose_installed: false,
         }
@@ -1288,7 +1291,12 @@ mod tests {
         assert!(!config.external_skills.enabled);
         assert!(config.external_skills.require_download_approval);
         assert!(config.external_skills.allowed_domains.is_empty());
-        assert!(config.external_skills.blocked_domains.is_empty());
+        assert!(
+            config
+                .external_skills
+                .blocked_domains
+                .contains("*.clawhub.io")
+        );
         assert!(config.external_skills.install_root.is_none());
         assert!(!config.external_skills.auto_expose_installed);
     }
@@ -1667,11 +1675,11 @@ mod tests {
         );
         env.set(
             "LOONGCLAW_EXTERNAL_SKILLS_ALLOWED_DOMAINS",
-            "skills.sh,clawhub.io",
+            "skills.sh,clawhub.ai",
         );
         env.set(
             "LOONGCLAW_EXTERNAL_SKILLS_BLOCKED_DOMAINS",
-            "malicious.example",
+            "malicious.example,*.clawhub.io",
         );
         env.set(
             "LOONGCLAW_EXTERNAL_SKILLS_INSTALL_ROOT",
@@ -1739,13 +1747,19 @@ mod tests {
             config
                 .external_skills
                 .allowed_domains
-                .contains("clawhub.io")
+                .contains("clawhub.ai")
         );
         assert!(
             config
                 .external_skills
                 .blocked_domains
                 .contains("malicious.example")
+        );
+        assert!(
+            config
+                .external_skills
+                .blocked_domains
+                .contains("*.clawhub.io")
         );
         assert_eq!(
             config.external_skills.install_root,
@@ -1862,8 +1876,11 @@ mod tests {
         let policy = ExternalSkillsRuntimePolicy {
             enabled: true,
             require_download_approval: false,
-            allowed_domains: BTreeSet::from(["skills.sh".to_owned(), "clawhub.io".to_owned()]),
-            blocked_domains: BTreeSet::from(["malicious.example".to_owned()]),
+            allowed_domains: BTreeSet::from(["skills.sh".to_owned(), "clawhub.ai".to_owned()]),
+            blocked_domains: BTreeSet::from([
+                "malicious.example".to_owned(),
+                "*.clawhub.io".to_owned(),
+            ]),
             install_root: Some(PathBuf::from("/tmp/managed-skills")),
             auto_expose_installed: false,
         };
@@ -1871,8 +1888,9 @@ mod tests {
         assert!(policy.enabled);
         assert!(!policy.require_download_approval);
         assert!(policy.allowed_domains.contains("skills.sh"));
-        assert!(policy.allowed_domains.contains("clawhub.io"));
+        assert!(policy.allowed_domains.contains("clawhub.ai"));
         assert!(policy.blocked_domains.contains("malicious.example"));
+        assert!(policy.blocked_domains.contains("*.clawhub.io"));
         assert_eq!(
             policy.install_root,
             Some(PathBuf::from("/tmp/managed-skills"))

@@ -475,6 +475,32 @@ fn build_tool_catalog() -> ToolCatalog {
             provider_definition_builder: external_skills_fetch_definition,
         },
         ToolDescriptor {
+            name: "external_skills.resolve",
+            provider_name: "external_skills_resolve",
+            aliases: &[],
+            description: "Normalize an external skill reference into a source-aware candidate",
+            execution_kind: ToolExecutionKind::Core,
+            availability: ToolAvailability::Runtime,
+            exposure: ToolExposureClass::Discoverable,
+            visibility_gate: ToolVisibilityGate::ExternalSkills,
+            capability_action_class: CapabilityActionClass::Discover,
+            policy: DEFAULT_TOOL_POLICY_DESCRIPTOR,
+            provider_definition_builder: external_skills_resolve_definition,
+        },
+        ToolDescriptor {
+            name: "external_skills.search",
+            provider_name: "external_skills_search",
+            aliases: &[],
+            description: "Search preferred external skill ecosystems and return normalized candidates",
+            execution_kind: ToolExecutionKind::Core,
+            availability: ToolAvailability::Runtime,
+            exposure: ToolExposureClass::Discoverable,
+            visibility_gate: ToolVisibilityGate::ExternalSkills,
+            capability_action_class: CapabilityActionClass::Discover,
+            policy: DEFAULT_TOOL_POLICY_DESCRIPTOR,
+            provider_definition_builder: external_skills_search_definition,
+        },
+        ToolDescriptor {
             name: "external_skills.inspect",
             provider_name: "external_skills_inspect",
             aliases: &[],
@@ -1718,13 +1744,17 @@ fn external_skills_fetch_definition(descriptor: &ToolDescriptor) -> Value {
         "type": "function",
         "function": {
             "name": descriptor.provider_name,
-            "description": "Download an external skill artifact with strict domain policy checks and explicit approval gating.",
+            "description": "Resolve and download an external skill artifact from a direct URL, GitHub reference, skills.sh page, clawhub.ai page, or npm package with strict domain policy checks and explicit approval gating.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "Preferred external skill reference. Supports direct URLs, GitHub refs, skills.sh pages, clawhub.ai pages, and npm packages."
+                    },
                     "url": {
                         "type": "string",
-                        "description": "HTTPS URL to download."
+                        "description": "Backward-compatible alias for `reference` when passing a direct URL or ecosystem reference."
                     },
                     "approval_granted": {
                         "type": "boolean",
@@ -1741,7 +1771,63 @@ fn external_skills_fetch_definition(descriptor: &ToolDescriptor) -> Value {
                         "description": "Maximum download size in bytes. Defaults to 5242880 and is capped at 20971520."
                     }
                 },
-                "required": ["url"],
+                "anyOf": [
+                    { "required": ["reference"] },
+                    { "required": ["url"] }
+                ],
+                "additionalProperties": false
+            }
+        }
+    })
+}
+
+fn external_skills_resolve_definition(descriptor: &ToolDescriptor) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": descriptor.provider_name,
+            "description": "Normalize a direct URL, GitHub reference, skills.sh page, ClawHub page, or npm package into a source-aware external skill candidate.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "External skill reference to normalize."
+                    }
+                },
+                "required": ["reference"],
+                "additionalProperties": false
+            }
+        }
+    })
+}
+
+fn external_skills_search_definition(descriptor: &ToolDescriptor) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": descriptor.provider_name,
+            "description": "Search preferred external skill ecosystems and return normalized candidates ranked by source priority.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query or external skill reference."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": "Maximum number of normalized candidates to return."
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional source filter list. Supported values: skills_sh, clawhub, github, npm."
+                    }
+                },
+                "required": ["query"],
                 "additionalProperties": false
             }
         }
@@ -1774,13 +1860,13 @@ fn external_skills_install_definition(descriptor: &ToolDescriptor) -> Value {
         "type": "function",
         "function": {
             "name": descriptor.provider_name,
-            "description": "Install a managed external skill from a local directory, local .tgz/.tar.gz archive, or a first-party bundled skill id.",
+            "description": "Install a managed external skill from a local directory, local .tgz/.tar.gz/.zip archive, or a first-party bundled skill id.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to a local directory containing SKILL.md or a local .tgz/.tar.gz archive."
+                        "description": "Path to a local directory containing SKILL.md or a local .tgz/.tar.gz/.zip archive."
                     },
                     "bundled_skill_id": {
                         "type": "string",
@@ -1789,6 +1875,15 @@ fn external_skills_install_definition(descriptor: &ToolDescriptor) -> Value {
                     "skill_id": {
                         "type": "string",
                         "description": "Optional explicit managed skill id override."
+                    },
+                    "source_skill_id": {
+                        "type": "string",
+                        "description": "Optional source skill selector when the input archive or directory contains multiple SKILL.md roots."
+                    },
+                    "security_decision": {
+                        "type": "string",
+                        "enum": ["approve_once", "deny"],
+                        "description": "Optional one-time security override after a risky install was scanned and returned needs_approval."
                     },
                     "replace": {
                         "type": "boolean",
@@ -2576,11 +2671,13 @@ fn tool_argument_hint(name: &str) -> &'static str {
         "tool.invoke" => "tool_id:string,lease:string,arguments:object",
         "claw.migrate" => "input_path?:string,mode?:string,source?:string",
         "external_skills.fetch" => {
-            "url:string,approval_granted?:boolean,save_as?:string,max_bytes?:integer"
+            "reference?:string,url?:string,approval_granted?:boolean,save_as?:string,max_bytes?:integer"
         }
+        "external_skills.resolve" => "reference:string",
+        "external_skills.search" => "query:string,max_results?:integer,sources?:string[]",
         "external_skills.inspect" => "skill_id:string",
         "external_skills.install" => {
-            "path?:string,bundled_skill_id?:string,skill_id?:string,replace?:boolean"
+            "path?:string,bundled_skill_id?:string,skill_id?:string,source_skill_id?:string,security_decision?:string,replace?:boolean"
         }
         "external_skills.invoke" => "skill_id:string",
         "external_skills.list" => "",
@@ -2626,10 +2723,17 @@ fn tool_parameter_types(name: &str) -> &'static [(&'static str, &'static str)] {
             ("source", "string"),
         ],
         "external_skills.fetch" => &[
+            ("reference", "string"),
             ("url", "string"),
             ("approval_granted", "boolean"),
             ("save_as", "string"),
             ("max_bytes", "integer"),
+        ],
+        "external_skills.resolve" => &[("reference", "string")],
+        "external_skills.search" => &[
+            ("query", "string"),
+            ("max_results", "integer"),
+            ("sources", "array"),
         ],
         "external_skills.inspect" | "external_skills.invoke" | "external_skills.remove" => {
             &[("skill_id", "string")]
@@ -2638,6 +2742,8 @@ fn tool_parameter_types(name: &str) -> &'static [(&'static str, &'static str)] {
             ("path", "string"),
             ("bundled_skill_id", "string"),
             ("skill_id", "string"),
+            ("source_skill_id", "string"),
+            ("security_decision", "string"),
             ("replace", "boolean"),
         ],
         "external_skills.list" => &[],
@@ -2709,7 +2815,9 @@ fn tool_required_fields(name: &str) -> &'static [&'static str] {
     match name {
         "tool.search" => &["query"],
         "tool.invoke" => &["tool_id", "lease", "arguments"],
-        "external_skills.fetch" => &["url"],
+        "external_skills.fetch" => &[],
+        "external_skills.resolve" => &["reference"],
+        "external_skills.search" => &["query"],
         "external_skills.inspect" | "external_skills.invoke" | "external_skills.remove" => {
             &["skill_id"]
         }
@@ -2743,6 +2851,8 @@ fn tool_tags(name: &str) -> &'static [&'static str] {
         "tool.invoke" => &["core", "dispatch", "invoke"],
         "claw.migrate" => &["migration", "migrate", "config", "legacy"],
         "external_skills.fetch" => &["skills", "download", "external", "fetch"],
+        "external_skills.resolve" => &["skills", "resolve", "normalize", "external"],
+        "external_skills.search" => &["skills", "search", "discover", "external"],
         "external_skills.inspect" => &["skills", "inspect", "metadata"],
         "external_skills.install" => &["skills", "install", "package"],
         "external_skills.invoke" => &["skills", "invoke", "instructions"],

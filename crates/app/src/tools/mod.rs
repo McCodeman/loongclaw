@@ -34,6 +34,8 @@ mod catalog;
 mod claw_migrate;
 pub(crate) mod delegate;
 mod external_skills;
+mod external_skills_scan;
+mod external_skills_sources;
 #[cfg(feature = "feishu-integration")]
 mod feishu;
 mod file;
@@ -547,7 +549,12 @@ fn claw_migrate_mode_requires_write(payload: &Value) -> bool {
 fn tool_requires_network_egress(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "web.fetch" | "web.search" | "browser.open" | "browser.click"
+        "web.fetch"
+            | "web.search"
+            | "browser.open"
+            | "browser.click"
+            | "external_skills.fetch"
+            | "external_skills.search"
     )
 }
 
@@ -805,6 +812,12 @@ fn dispatch_tool_request(
         }
         "external_skills.list" => {
             external_skills::execute_external_skills_list_tool_with_config(request, config)
+        }
+        "external_skills.resolve" => {
+            external_skills::execute_external_skills_resolve_tool_with_config(request, config)
+        }
+        "external_skills.search" => {
+            external_skills::execute_external_skills_search_tool_with_config(request, config)
         }
         "external_skills.policy" => {
             external_skills::execute_external_skills_policy_tool_with_config(request, config)

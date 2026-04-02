@@ -9,6 +9,12 @@ use std::{collections::BTreeSet, path::Path};
 pub enum SkillsCommands {
     /// List discovered external skills across managed, user, and project scopes
     List,
+    /// Search preferred external skill ecosystems and return normalized candidates
+    Search {
+        query: String,
+        #[arg(long)]
+        max_results: Option<usize>,
+    },
     /// Inspect one resolved external skill
     #[command(visible_alias = "inspect")]
     Info { skill_id: String },
@@ -26,6 +32,8 @@ pub enum SkillsCommands {
         #[arg(long)]
         skill_id: Option<String>,
         #[arg(long, default_value_t = false)]
+        approve_security_once: bool,
+        #[arg(long, default_value_t = false)]
         replace: bool,
     },
     /// Install a managed external skill from a local directory or archive
@@ -33,6 +41,8 @@ pub enum SkillsCommands {
         path: String,
         #[arg(long)]
         skill_id: Option<String>,
+        #[arg(long, default_value_t = false)]
+        approve_security_once: bool,
         #[arg(long, default_value_t = false)]
         replace: bool,
     },
@@ -124,6 +134,7 @@ pub fn execute_skills_command(options: SkillsCommandOptions) -> CliResult<Skills
             execute_enable_browser_preview_command(&resolved_path, &mut config, replace)?
         }
         command @ (SkillsCommands::List
+        | SkillsCommands::Search { .. }
         | SkillsCommands::Info { .. }
         | SkillsCommands::Fetch { .. }
         | SkillsCommands::Install { .. }
@@ -152,6 +163,15 @@ fn execute_non_policy_skills_command(
                 );
             mvp::tools::external_skills_operator_list_with_config(&tool_runtime_config)
         }
+        SkillsCommands::Search { query, max_results } => {
+            let tool_runtime_config =
+                mvp::tools::runtime_config::ToolRuntimeConfig::from_loongclaw_config(
+                    config,
+                    Some(resolved_path),
+                );
+            let request = build_skills_tool_request(SkillsCommands::Search { query, max_results })?;
+            mvp::tools::execute_tool_core_with_config(request, &tool_runtime_config)
+        }
         SkillsCommands::Info { skill_id } => {
             let tool_runtime_config =
                 mvp::tools::runtime_config::ToolRuntimeConfig::from_loongclaw_config(
@@ -170,6 +190,7 @@ fn execute_non_policy_skills_command(
             approve_download,
             install,
             skill_id,
+            approve_security_once,
             replace,
         } => execute_fetch_command(
             resolved_path,
@@ -180,6 +201,7 @@ fn execute_non_policy_skills_command(
             approve_download,
             install,
             skill_id.as_deref(),
+            approve_security_once,
             replace,
         ),
         SkillsCommands::InstallBundled { skill_id, replace } => {
@@ -206,6 +228,13 @@ fn build_skills_tool_request(command: SkillsCommands) -> CliResult<ToolCoreReque
             tool_name: "external_skills.list".to_owned(),
             payload: json!({}),
         }),
+        SkillsCommands::Search { query, max_results } => Ok(ToolCoreRequest {
+            tool_name: "external_skills.search".to_owned(),
+            payload: json!({
+                "query": query,
+                "max_results": max_results,
+            }),
+        }),
         SkillsCommands::Info { skill_id } => Ok(ToolCoreRequest {
             tool_name: "external_skills.inspect".to_owned(),
             payload: json!({
@@ -218,10 +247,17 @@ fn build_skills_tool_request(command: SkillsCommands) -> CliResult<ToolCoreReque
         SkillsCommands::Install {
             path,
             skill_id,
+            approve_security_once,
             replace,
         } => Ok(ToolCoreRequest {
             tool_name: "external_skills.install".to_owned(),
-            payload: build_install_payload(&path, skill_id.as_deref(), replace),
+            payload: build_install_payload(
+                &path,
+                skill_id.as_deref(),
+                None,
+                approve_security_once,
+                replace,
+            ),
         }),
         SkillsCommands::InstallBundled { .. } | SkillsCommands::EnableBrowserPreview { .. } => {
             Err("bundled skills install requests are handled directly by the daemon CLI".to_owned())
@@ -247,11 +283,15 @@ fn execute_fetch_command(
     approve_download: bool,
     install: bool,
     skill_id: Option<&str>,
+    approve_security_once: bool,
     replace: bool,
 ) -> CliResult<ToolCoreOutcome> {
     if !install {
         if skill_id.is_some() {
             return Err("skills fetch --skill-id requires --install".to_owned());
+        }
+        if approve_security_once {
+            return Err("skills fetch --approve-security-once requires --install".to_owned());
         }
         if replace {
             return Err("skills fetch --replace requires --install".to_owned());
@@ -272,23 +312,38 @@ fn execute_fetch_command(
             .get("saved_path")
             .and_then(Value::as_str)
             .ok_or_else(|| "external skills fetch payload missing `saved_path`".to_owned())?;
-        let install_request = build_install_request(saved_path, skill_id, replace);
-        Some(
-            mvp::tools::execute_tool_core_with_config(install_request, &tool_runtime_config)?
-                .payload,
-        )
+        let source_skill_id = fetched.get("source_skill_id").and_then(Value::as_str);
+        let install_request = build_install_request(
+            saved_path,
+            skill_id,
+            source_skill_id,
+            approve_security_once,
+            replace,
+        );
+        Some(mvp::tools::execute_tool_core_with_config(
+            install_request,
+            &tool_runtime_config,
+        )?)
     } else {
         None
     };
+    let installed_status = installed.as_ref().map(|outcome| outcome.status.clone());
+    let top_level_status = installed_status.clone().unwrap_or_else(|| "ok".to_owned());
+    let sync_applied = installed_status
+        .as_deref()
+        .map(|status| status == "ok")
+        .unwrap_or(false);
+    let installed_payload = installed.map(|outcome| outcome.payload);
 
     Ok(ToolCoreOutcome {
-        status: "ok".to_owned(),
+        status: top_level_status,
         payload: json!({
             "adapter": "daemon-cli",
             "tool_name": "skills.fetch",
-            "sync_applied": install,
+            "sync_applied": sync_applied,
             "fetched": fetched,
-            "installed": installed,
+            "installed_status": installed_status,
+            "installed": installed_payload,
         }),
     })
 }
@@ -316,20 +371,44 @@ fn build_fetch_tool_request(
     }
 }
 
-fn build_install_payload(path: &str, skill_id: Option<&str>, replace: bool) -> Value {
+fn build_install_payload(
+    path: &str,
+    skill_id: Option<&str>,
+    source_skill_id: Option<&str>,
+    approve_security_once: bool,
+    replace: bool,
+) -> Value {
     let mut payload = Map::new();
     payload.insert("path".to_owned(), json!(path));
     payload.insert("replace".to_owned(), json!(replace));
     if let Some(skill_id) = skill_id {
         payload.insert("skill_id".to_owned(), json!(skill_id));
     }
+    if let Some(source_skill_id) = source_skill_id {
+        payload.insert("source_skill_id".to_owned(), json!(source_skill_id));
+    }
+    if approve_security_once {
+        payload.insert("security_decision".to_owned(), json!("approve_once"));
+    }
     Value::Object(payload)
 }
 
-fn build_install_request(path: &str, skill_id: Option<&str>, replace: bool) -> ToolCoreRequest {
+fn build_install_request(
+    path: &str,
+    skill_id: Option<&str>,
+    source_skill_id: Option<&str>,
+    approve_security_once: bool,
+    replace: bool,
+) -> ToolCoreRequest {
     ToolCoreRequest {
         tool_name: "external_skills.install".to_owned(),
-        payload: build_install_payload(path, skill_id, replace),
+        payload: build_install_payload(
+            path,
+            skill_id,
+            source_skill_id,
+            approve_security_once,
+            replace,
+        ),
     }
 }
 
@@ -651,6 +730,32 @@ pub fn render_skills_cli_text(execution: &SkillsCommandExecution) -> CliResult<S
                 }
             }
         }
+        "external_skills.search" => {
+            let results = payload
+                .get("results")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "skills search payload missing `results` array".to_owned())?;
+            if results.is_empty() {
+                lines.push("results: (none)".to_owned());
+            } else {
+                lines.push("results:".to_owned());
+                for result in results {
+                    let title = result.get("title").and_then(Value::as_str).unwrap_or("-");
+                    let source = result.get("source").and_then(Value::as_str).unwrap_or("-");
+                    let candidate = result
+                        .get("candidate")
+                        .and_then(Value::as_object)
+                        .ok_or_else(|| {
+                            "skills search result missing `candidate` object".to_owned()
+                        })?;
+                    let reference = candidate
+                        .get("canonical_reference")
+                        .and_then(Value::as_str)
+                        .unwrap_or("-");
+                    lines.push(format!("- [{source}] {title} -> {reference}"));
+                }
+            }
+        }
         "skills.fetch" => {
             let fetched = payload
                 .get("fetched")
@@ -693,6 +798,13 @@ pub fn render_skills_cli_text(execution: &SkillsCommandExecution) -> CliResult<S
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             lines.push(format!("sync_applied={sync_applied}"));
+            let installed_status = payload
+                .get("installed_status")
+                .and_then(Value::as_str)
+                .unwrap_or("ok");
+            if payload.get("installed").is_some() {
+                lines.push(format!("installed_status={installed_status}"));
+            }
             if sync_applied {
                 let installed = payload
                     .get("installed")
@@ -726,6 +838,20 @@ pub fn render_skills_cli_text(execution: &SkillsCommandExecution) -> CliResult<S
                         .and_then(Value::as_bool)
                         .unwrap_or(false)
                 ));
+            } else if payload.get("installed").is_some() {
+                let installed = payload
+                    .get("installed")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| "skills fetch payload missing `installed` object".to_owned())?;
+                let security_findings = installed
+                    .get("security_scan")
+                    .and_then(|value| value.get("findings"))
+                    .and_then(Value::as_array)
+                    .map(|items| items.len())
+                    .unwrap_or(0);
+                if security_findings > 0 {
+                    lines.push(format!("security_findings={security_findings}"));
+                }
             }
         }
         "external_skills.inspect" => {
