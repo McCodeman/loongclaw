@@ -28,7 +28,7 @@ pub use channels::{
     FeishuDomain, GoogleChatAccountConfig, GoogleChatChannelConfig, ImessageAccountConfig,
     ImessageChannelConfig, IrcAccountConfig, IrcChannelConfig, LineAccountConfig,
     LineChannelConfig, MatrixAccountConfig, MatrixChannelConfig, MattermostAccountConfig,
-    MattermostChannelConfig, NextcloudTalkAccountConfig, NextcloudTalkChannelConfig,
+    MattermostChannelConfig, NatsChannelConfig, NextcloudTalkAccountConfig, NextcloudTalkChannelConfig,
     NostrAccountConfig, NostrChannelConfig, ResolvedDingtalkChannelConfig,
     ResolvedDiscordChannelConfig, ResolvedEmailChannelConfig, ResolvedFeishuChannelConfig,
     ResolvedGoogleChatChannelConfig, ResolvedImessageChannelConfig, ResolvedIrcChannelConfig,

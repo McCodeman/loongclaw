@@ -28,6 +28,7 @@ use crate::CliResult;
     feature = "channel-wecom",
     feature = "channel-whatsapp",
     feature = "channel-imessage",
+    feature = "channel-nats",
 ))]
 use crate::KernelContext;
 #[cfg(any(
@@ -75,6 +76,7 @@ use crate::config::LoongClawConfig;
     feature = "channel-wecom",
     feature = "channel-whatsapp",
     feature = "channel-imessage",
+    feature = "channel-nats",
 ))]
 use crate::context::{DEFAULT_TOKEN_TTL_S, bootstrap_kernel_context_with_config};
 
@@ -245,6 +247,7 @@ use super::types::{
     feature = "channel-matrix",
     feature = "channel-wecom",
     feature = "channel-whatsapp",
+    feature = "channel-nats",
 ))]
 use super::types::{
     ChannelCommandFuture, ChannelResolvedAcpTurnHints, KnownChannelSessionSendTarget,
@@ -2899,6 +2902,126 @@ pub async fn run_wecom_channel_with_stop(
     run_wecom_channel_with_context(context, stop, initialize_runtime_environment).await
 }
 
+#[cfg(feature = "channel-nats")]
+#[allow(clippy::print_stdout)] // CLI startup banner
+async fn run_nats_channel_with_context(
+    config: &LoongClawConfig,
+    resolved_path: &std::path::Path,
+    stop: ChannelServeStopHandle,
+) -> CliResult<()> {
+    let nats_config = &config.nats;
+    let url = nats_config
+        .url
+        .as_deref()
+        .ok_or_else(|| "nats.url is required".to_owned())?;
+    let workspace = nats_config.workspace.as_deref().unwrap_or("default");
+
+    // Resolve optional NKey and JWT credentials.
+    let nkey_seed =
+        crate::secrets::resolve_secret_with_legacy_env(nats_config.nkey.as_ref(), None);
+    let jwt = crate::secrets::resolve_secret_with_legacy_env(nats_config.jwt.as_ref(), None);
+
+    crate::runtime_env::initialize_runtime_environment(config, Some(resolved_path));
+    let kernel_ctx = bootstrap_kernel_context_with_config(
+        "channel-nats",
+        DEFAULT_TOKEN_TTL_S,
+        config,
+    )?;
+    let batch_kernel_ctx = Arc::new(crate::KernelContext {
+        kernel: kernel_ctx.kernel.clone(),
+        token: kernel_ctx.token.clone(),
+    });
+
+    with_channel_serve_runtime_with_stop(
+        ChannelServeRuntimeSpec {
+            platform: ChannelPlatform::Nats,
+            operation_id: CHANNEL_OPERATION_SERVE_ID,
+            account_id: workspace,
+            account_label: workspace,
+        },
+        stop,
+        move |_runtime, stop| async move {
+            let mut adapter = super::nats::NatsAdapter::new_with_auth(
+                url,
+                workspace,
+                nkey_seed.as_deref(),
+                jwt.as_deref(),
+            )
+            .await?;
+
+            println!(
+                "nats channel started (url={}, workspace={})",
+                url, workspace
+            );
+
+            loop {
+                let batch = tokio::select! {
+                    _ = stop.wait() => break,
+                    batch = adapter.receive_batch() => batch?,
+                };
+                let config = config.clone();
+                let kernel_ctx = batch_kernel_ctx.clone();
+                let resolved_path = resolved_path.to_path_buf();
+                process_channel_batch(
+                    &mut adapter,
+                    batch,
+                    None,
+                    |message, turn_feedback_policy| {
+                        let config = config.clone();
+                        let kernel_ctx = kernel_ctx.clone();
+                        let resolved_path = resolved_path.clone();
+                        Box::pin(async move {
+                            process_inbound_with_provider(
+                                &config,
+                                Some(resolved_path.as_path()),
+                                &message,
+                                kernel_ctx.as_ref(),
+                                turn_feedback_policy,
+                            )
+                            .await
+                        })
+                    },
+                )
+                .await?;
+                // Small sleep between polls
+                tokio::select! {
+                    _ = stop.wait() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+                }
+            }
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "channel-nats")]
+pub async fn run_nats_channel_with_stop(
+    resolved_path: PathBuf,
+    config: LoongClawConfig,
+    stop: ChannelServeStopHandle,
+    initialize_runtime_environment: bool,
+) -> CliResult<()> {
+    if initialize_runtime_environment {
+        crate::runtime_env::initialize_runtime_environment(&config, Some(&resolved_path));
+    }
+    run_nats_channel_with_context(&config, &resolved_path, stop).await
+}
+
+#[allow(clippy::print_stdout)] // CLI output
+pub async fn run_nats_channel(config_path: Option<&str>) -> CliResult<()> {
+    #[cfg(not(feature = "channel-nats"))]
+    {
+        let _ = config_path;
+        return Err("nats channel is disabled (enable feature `channel-nats`)".to_owned());
+    }
+    #[cfg(feature = "channel-nats")]
+    {
+        let (resolved_path, config) = crate::config::load(config_path)?;
+        run_nats_channel_with_context(&config, &resolved_path, ChannelServeStopHandle::new()).await
+    }
+}
+
 pub async fn run_background_channel_with_stop(
     channel_id: &str,
     resolved_path: PathBuf,
@@ -3037,6 +3160,31 @@ pub async fn run_background_channel_with_stop(
                 );
                 return Err(
                     "whatsapp channel is disabled (enable feature `channel-whatsapp`)".to_owned(),
+                );
+            }
+        }
+        "nats" => {
+            #[cfg(feature = "channel-nats")]
+            {
+                return run_nats_channel_with_stop(
+                    resolved_path,
+                    config,
+                    stop,
+                    initialize_runtime_environment,
+                )
+                .await;
+            }
+            #[cfg(not(feature = "channel-nats"))]
+            {
+                let _ = (
+                    resolved_path,
+                    config,
+                    account_id,
+                    stop,
+                    initialize_runtime_environment,
+                );
+                return Err(
+                    "nats channel is disabled (enable feature `channel-nats`)".to_owned(),
                 );
             }
         }
@@ -3316,7 +3464,8 @@ pub(super) async fn process_inbound_with_runtime_and_feedback<R: ConversationRun
     feature = "channel-feishu",
     feature = "channel-matrix",
     feature = "channel-wecom",
-    feature = "channel-whatsapp"
+    feature = "channel-whatsapp",
+    feature = "channel-nats",
 ))]
 pub(crate) async fn process_inbound_with_provider(
     config: &LoongClawConfig,

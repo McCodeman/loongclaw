@@ -1785,6 +1785,36 @@ pub struct IrcChannelConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+pub struct NatsChannelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+    #[serde(default)]
+    pub nkey: Option<SecretRef>,
+    #[serde(default)]
+    pub jwt: Option<SecretRef>,
+    #[serde(default)]
+    pub subjects: Vec<String>,
+}
+
+impl Default for NatsChannelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: None,
+            workspace: None,
+            nkey: None,
+            jwt: None,
+            subjects: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct TeamsChannelConfig {
     #[serde(default)]
     pub enabled: bool,

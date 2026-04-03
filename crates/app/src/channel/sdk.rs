@@ -25,6 +25,9 @@ use super::registry::WECOM_RUNTIME_COMMAND_DESCRIPTOR;
 #[cfg(feature = "channel-whatsapp")]
 use super::registry::WHATSAPP_RUNTIME_COMMAND_DESCRIPTOR;
 
+#[cfg(feature = "channel-nats")]
+use super::registry::NATS_RUNTIME_COMMAND_DESCRIPTOR;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelRuntimeKind {
     Interactive,
@@ -257,6 +260,14 @@ const NOSTR_CHANNEL_DESCRIPTOR: ChannelDescriptor = ChannelDescriptor {
     id: "nostr",
     label: "nostr",
     surface_label: "nostr channel",
+    runtime_kind: ChannelRuntimeKind::Service,
+    serve_subcommand: None,
+};
+
+const NATS_CHANNEL_DESCRIPTOR: ChannelDescriptor = ChannelDescriptor {
+    id: "nats",
+    label: "nats",
+    surface_label: "nats channel",
     runtime_kind: ChannelRuntimeKind::Service,
     serve_subcommand: None,
 };
@@ -514,6 +525,20 @@ const NOSTR_CHANNEL_INTEGRATION: ChannelIntegrationDescriptor = ChannelIntegrati
     background_surface_is_enabled: None,
 };
 
+#[cfg(feature = "channel-nats")]
+const NATS_BACKGROUND_RUNTIME: Option<ChannelRuntimeCommandDescriptor> =
+    Some(NATS_RUNTIME_COMMAND_DESCRIPTOR);
+#[cfg(not(feature = "channel-nats"))]
+const NATS_BACKGROUND_RUNTIME: Option<ChannelRuntimeCommandDescriptor> = None;
+
+const NATS_CHANNEL_INTEGRATION: ChannelIntegrationDescriptor = ChannelIntegrationDescriptor {
+    descriptor: &NATS_CHANNEL_DESCRIPTOR,
+    background_runtime: NATS_BACKGROUND_RUNTIME,
+    is_enabled: nats_channel_is_enabled,
+    collect_validation_issues: collect_nats_channel_validation_issues,
+    background_surface_is_enabled: Some(nats_background_surface_is_enabled),
+};
+
 const CHANNEL_INTEGRATIONS: &[ChannelIntegrationDescriptor] = &[
     CLI_CHANNEL_INTEGRATION,
     TELEGRAM_CHANNEL_INTEGRATION,
@@ -541,6 +566,7 @@ const CHANNEL_INTEGRATIONS: &[ChannelIntegrationDescriptor] = &[
     IRC_CHANNEL_INTEGRATION,
     IMESSAGE_CHANNEL_INTEGRATION,
     NOSTR_CHANNEL_INTEGRATION,
+    NATS_CHANNEL_INTEGRATION,
 ];
 
 pub(crate) fn channel_descriptor(id: &str) -> Option<&'static ChannelDescriptor> {
@@ -739,6 +765,10 @@ fn nostr_channel_is_enabled(config: &LoongClawConfig) -> bool {
     config.nostr.enabled
 }
 
+fn nats_channel_is_enabled(config: &LoongClawConfig) -> bool {
+    config.nats.enabled
+}
+
 fn collect_cli_channel_validation_issues(_config: &LoongClawConfig) -> Vec<ConfigValidationIssue> {
     Vec::new()
 }
@@ -873,6 +903,19 @@ fn collect_imessage_channel_validation_issues(
 
 fn collect_nostr_channel_validation_issues(config: &LoongClawConfig) -> Vec<ConfigValidationIssue> {
     config.nostr.validate()
+}
+
+fn collect_nats_channel_validation_issues(
+    _config: &LoongClawConfig,
+) -> Vec<ConfigValidationIssue> {
+    Vec::new()
+}
+
+fn nats_background_surface_is_enabled(
+    config: &LoongClawConfig,
+    _account_id: Option<&str>,
+) -> CliResult<bool> {
+    Ok(config.nats.enabled && config.nats.url.is_some())
 }
 
 fn telegram_background_surface_is_enabled(

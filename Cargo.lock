@@ -2698,6 +2698,7 @@ dependencies = [
  "libc",
  "loongclaw-contracts",
  "loongclaw-kernel",
+ "nkeys",
  "prost",
  "rand 0.10.0",
  "regex",

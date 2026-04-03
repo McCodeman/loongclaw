@@ -132,6 +132,13 @@ pub const WHATSAPP_RUNTIME_COMMAND_DESCRIPTOR: ChannelRuntimeCommandDescriptor =
         serve_bootstrap_agent_id: "channel-whatsapp",
     };
 
+pub const NATS_RUNTIME_COMMAND_DESCRIPTOR: ChannelRuntimeCommandDescriptor =
+    ChannelRuntimeCommandDescriptor {
+        channel_id: "nats",
+        platform: ChannelPlatform::Nats,
+        serve_bootstrap_agent_id: "channel-nats",
+    };
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelCommandFamilyDescriptor {
     pub runtime: ChannelRuntimeCommandDescriptor,

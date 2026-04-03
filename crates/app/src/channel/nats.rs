@@ -12,7 +12,6 @@ use tokio::sync::Mutex;
 use super::types::{
     ChannelAdapter, ChannelDelivery, ChannelInboundMessage, ChannelOutboundMessage,
     ChannelOutboundTarget, ChannelOutboundTargetKind, ChannelPlatform, ChannelSession,
-    ChannelStreamingMode,
 };
 use crate::CliResult;
 
@@ -62,11 +61,72 @@ pub(super) struct NatsAdapter {
 }
 
 impl NatsAdapter {
+    /// Connect to NATS without authentication (dev/testing).
+    #[allow(dead_code)]
     pub(super) async fn new(url: &str, workspace: &str) -> CliResult<Self> {
         let client = async_nats::connect(url)
             .await
             .map_err(|e| format!("failed to connect to NATS at {url}: {e}"))?;
 
+        Self::from_client(client, workspace).await
+    }
+
+    /// Connect to NATS with optional NKey and/or JWT authentication.
+    ///
+    /// Supports three modes:
+    /// - No credentials: plain connection (dev/testing)
+    /// - NKey seed only: NKey authentication (production workspace-level)
+    /// - JWT + NKey seed: full workspace isolation with account-scoped JWT
+    pub(super) async fn new_with_auth(
+        url: &str,
+        workspace: &str,
+        nkey_seed: Option<&str>,
+        jwt: Option<&str>,
+    ) -> CliResult<Self> {
+        let client = match (jwt, nkey_seed) {
+            (Some(jwt), Some(nkey_seed)) => {
+                // JWT + NKey: full workspace isolation.
+                // The JWT identifies the account; the NKey signs server nonces.
+                let key_pair = nkeys::KeyPair::from_seed(nkey_seed)
+                    .map_err(|e| format!("invalid NKey seed: {e}"))?;
+                let key_pair = Arc::new(key_pair);
+                async_nats::ConnectOptions::with_jwt(jwt.to_string(), move |nonce| {
+                    let key_pair = key_pair.clone();
+                    async move {
+                        key_pair
+                            .sign(&nonce)
+                            .map_err(async_nats::AuthError::new)
+                    }
+                })
+                .connect(url)
+                .await
+                .map_err(|e| format!("failed to connect to NATS at {url} with JWT+NKey: {e}"))?
+            }
+            (None, Some(nkey_seed)) => {
+                // NKey-only authentication.
+                async_nats::ConnectOptions::with_nkey(nkey_seed.to_string())
+                    .connect(url)
+                    .await
+                    .map_err(|e| format!("failed to connect to NATS at {url} with NKey: {e}"))?
+            }
+            (Some(_jwt), None) => {
+                return Err(
+                    "NATS JWT authentication requires an NKey seed for signing".to_owned(),
+                );
+            }
+            (None, None) => {
+                // No auth — plain connection.
+                async_nats::connect(url)
+                    .await
+                    .map_err(|e| format!("failed to connect to NATS at {url}: {e}"))?
+            }
+        };
+
+        Self::from_client(client, workspace).await
+    }
+
+    /// Create adapter from an already-connected client.
+    async fn from_client(client: async_nats::Client, workspace: &str) -> CliResult<Self> {
         let subject_prefix = format!("klawper.workspace.{workspace}.workflow");
         let subscribe_subject = format!("{subject_prefix}.*.step.*.dispatch");
 

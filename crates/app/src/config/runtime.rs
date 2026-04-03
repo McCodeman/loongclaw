@@ -15,7 +15,7 @@ use super::{
     channels::{
         CliChannelConfig, DingtalkChannelConfig, DiscordChannelConfig, EmailChannelConfig,
         FeishuChannelConfig, GoogleChatChannelConfig, ImessageChannelConfig, IrcChannelConfig,
-        LineChannelConfig, MatrixChannelConfig, MattermostChannelConfig,
+        LineChannelConfig, MatrixChannelConfig, MattermostChannelConfig, NatsChannelConfig,
         NextcloudTalkChannelConfig, NostrChannelConfig, SignalChannelConfig, SlackChannelConfig,
         SynologyChatChannelConfig, TeamsChannelConfig, TelegramChannelConfig, TlonChannelConfig,
         TwitchChannelConfig, WebhookChannelConfig, WecomChannelConfig, WhatsappChannelConfig,
@@ -123,6 +123,8 @@ pub struct LoongClawConfig {
     pub synology_chat: SynologyChatChannelConfig,
     #[serde(default)]
     pub irc: IrcChannelConfig,
+    #[serde(default)]
+    pub nats: NatsChannelConfig,
     #[serde(default)]
     pub signal: SignalChannelConfig,
     #[serde(default)]
