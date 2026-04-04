@@ -2,6 +2,7 @@
 // NATS channel adapter for klawper workflow dispatch.
 // Subscribes to NATS subjects, receives workflow step dispatch messages,
 // and routes them as inbound messages to loongclaw agents.
+// Responds to controller result polling via NATS request-reply.
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -37,7 +38,7 @@ struct StepDispatchPayload {
 }
 
 /// Result payload sent back to the controller.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StepResultPayload {
     run_name: String,
@@ -49,15 +50,16 @@ struct StepResultPayload {
     duration_ms: i64,
 }
 
+/// Cached result keyed by NATS result subject.
+type CachedResults = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
 pub(super) struct NatsAdapter {
     client: async_nats::Client,
     subscriber: Option<async_nats::Subscriber>,
-    #[allow(dead_code)]
     workspace: String,
     #[allow(dead_code)]
     subject_prefix: String,
-    #[allow(dead_code)]
-    pending_results: Arc<Mutex<Vec<(String, StepResultPayload)>>>,
+    cached_results: CachedResults,
 }
 
 impl NatsAdapter {
@@ -72,11 +74,6 @@ impl NatsAdapter {
     }
 
     /// Connect to NATS with optional NKey and/or JWT authentication.
-    ///
-    /// Supports three modes:
-    /// - No credentials: plain connection (dev/testing)
-    /// - NKey seed only: NKey authentication (production workspace-level)
-    /// - JWT + NKey seed: full workspace isolation with account-scoped JWT
     pub(super) async fn new_with_auth(
         url: &str,
         workspace: &str,
@@ -85,8 +82,6 @@ impl NatsAdapter {
     ) -> CliResult<Self> {
         let client = match (jwt, nkey_seed) {
             (Some(jwt), Some(nkey_seed)) => {
-                // JWT + NKey: full workspace isolation.
-                // The JWT identifies the account; the NKey signs server nonces.
                 let key_pair = nkeys::KeyPair::from_seed(nkey_seed)
                     .map_err(|e| format!("invalid NKey seed: {e}"))?;
                 let key_pair = Arc::new(key_pair);
@@ -103,7 +98,6 @@ impl NatsAdapter {
                 .map_err(|e| format!("failed to connect to NATS at {url} with JWT+NKey: {e}"))?
             }
             (None, Some(nkey_seed)) => {
-                // NKey-only authentication.
                 async_nats::ConnectOptions::with_nkey(nkey_seed.to_string())
                     .connect(url)
                     .await
@@ -115,7 +109,6 @@ impl NatsAdapter {
                 );
             }
             (None, None) => {
-                // No auth — plain connection.
                 async_nats::connect(url)
                     .await
                     .map_err(|e| format!("failed to connect to NATS at {url}: {e}"))?
@@ -135,12 +128,41 @@ impl NatsAdapter {
             .await
             .map_err(|e| format!("failed to subscribe to {subscribe_subject}: {e}"))?;
 
+        let cached_results: CachedResults = Arc::new(Mutex::new(Vec::new()));
+
+        // Spawn a background task that listens for result poll requests
+        // from the controller and responds with cached results.
+        let poll_subject = format!("{subject_prefix}.*.step.*.result");
+        let poll_client = client.clone();
+        let poll_cache = cached_results.clone();
+        tokio::spawn(async move {
+            let mut sub = match poll_client.subscribe(poll_subject).await {
+                Ok(sub) => sub,
+                Err(e) => {
+                    eprintln!("nats: failed to subscribe to result poll: {e}");
+                    return;
+                }
+            };
+            while let Some(msg) = sub.next().await {
+                if let Some(reply) = msg.reply {
+                    // Check cache for a result matching this subject.
+                    let cache = poll_cache.lock().await;
+                    let found = cache
+                        .iter()
+                        .find(|(subj, _)| *subj == msg.subject.as_str());
+                    if let Some((_, data)) = found {
+                        let _ = poll_client.publish(reply, data.clone().into()).await;
+                    }
+                }
+            }
+        });
+
         Ok(Self {
             client,
             subscriber: Some(subscriber),
             workspace: workspace.to_owned(),
             subject_prefix,
-            pending_results: Arc::new(Mutex::new(Vec::new())),
+            cached_results,
         })
     }
 }
@@ -226,11 +248,20 @@ impl ChannelAdapter for NatsAdapter {
         };
 
         // The target.id is the NATS result subject.
-        let subject = &target.id;
+        let subject = target.id.clone();
+
+        // Parse run/step names from the subject.
+        // Subject format: klawper.workspace.{ws}.workflow.{run}.step.{step}.result
+        let parts: Vec<&str> = subject.split('.').collect();
+        let (run_name, step_name) = if parts.len() >= 8 {
+            (parts[4].to_string(), parts[6].to_string())
+        } else {
+            (String::new(), String::new())
+        };
 
         let result = StepResultPayload {
-            run_name: String::new(),
-            step_name: String::new(),
+            run_name,
+            step_name,
             status: "completed".to_string(),
             output: text,
             error: None,
@@ -240,10 +271,22 @@ impl ChannelAdapter for NatsAdapter {
         let data =
             serde_json::to_vec(&result).map_err(|e| format!("failed to serialize result: {e}"))?;
 
+        // Cache the result for the poll responder.
+        {
+            let mut cache = self.cached_results.lock().await;
+            // Replace existing entry for this subject or add new.
+            if let Some(entry) = cache.iter_mut().find(|(s, _)| *s == subject) {
+                entry.1 = data.clone();
+            } else {
+                cache.push((subject.clone(), data.clone()));
+            }
+        }
+
+        // Also publish directly (in case controller is already listening).
         self.client
-            .publish(subject.to_string(), data.into())
+            .publish(subject, data.into())
             .await
-            .map_err(|e| format!("failed to publish to {subject}: {e}"))?;
+            .map_err(|e| format!("failed to publish result: {e}"))?;
 
         Ok(())
     }
