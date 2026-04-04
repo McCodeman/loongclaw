@@ -135,26 +135,47 @@ impl NatsAdapter {
         let poll_subject = format!("{subject_prefix}.*.step.*.result");
         let poll_client = client.clone();
         let poll_cache = cached_results.clone();
+        eprintln!("nats: subscribing to result poll subject: {poll_subject}");
         tokio::spawn(async move {
-            let mut sub = match poll_client.subscribe(poll_subject).await {
-                Ok(sub) => sub,
+            let mut sub = match poll_client.subscribe(poll_subject.clone()).await {
+                Ok(sub) => {
+                    eprintln!("nats: result poll subscriber ready on {poll_subject}");
+                    sub
+                }
                 Err(e) => {
                     eprintln!("nats: failed to subscribe to result poll: {e}");
                     return;
                 }
             };
             while let Some(msg) = sub.next().await {
+                eprintln!(
+                    "nats: poll request received on subject={} reply={:?} payload_len={}",
+                    msg.subject,
+                    msg.reply,
+                    msg.payload.len()
+                );
                 if let Some(reply) = msg.reply {
-                    // Check cache for a result matching this subject.
                     let cache = poll_cache.lock().await;
+                    let cache_len = cache.len();
                     let found = cache
                         .iter()
                         .find(|(subj, _)| *subj == msg.subject.as_str());
-                    if let Some((_, data)) = found {
-                        let _ = poll_client.publish(reply, data.clone().into()).await;
+                    match found {
+                        Some((subj, data)) => {
+                            eprintln!("nats: cache HIT for {subj}, replying to {reply} ({} bytes)", data.len());
+                            if let Err(e) = poll_client.publish(reply, data.clone().into()).await {
+                                eprintln!("nats: failed to publish reply: {e}");
+                            }
+                        }
+                        None => {
+                            eprintln!("nats: cache MISS for {} (cache has {} entries)", msg.subject, cache_len);
+                        }
                     }
+                } else {
+                    eprintln!("nats: poll message has no reply-to (fire-and-forget publish, not request-reply)");
                 }
             }
+            eprintln!("nats: result poll subscriber exited");
         });
 
         Ok(Self {
@@ -274,15 +295,16 @@ impl ChannelAdapter for NatsAdapter {
         // Cache the result for the poll responder.
         {
             let mut cache = self.cached_results.lock().await;
-            // Replace existing entry for this subject or add new.
             if let Some(entry) = cache.iter_mut().find(|(s, _)| *s == subject) {
                 entry.1 = data.clone();
             } else {
                 cache.push((subject.clone(), data.clone()));
             }
+            eprintln!("nats: cached result for subject={} ({} bytes, cache size={})", subject, data.len(), cache.len());
         }
 
         // Also publish directly (in case controller is already listening).
+        eprintln!("nats: publishing result to {subject}");
         self.client
             .publish(subject, data.into())
             .await
